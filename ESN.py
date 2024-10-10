@@ -53,35 +53,67 @@ class ESN_mult():
 @dataclass
 class Target_Info:
     tar_f: torch.tensor
-    maxdelay: list[int]
+    delay: list[int]
     degree: list[int]
+    in_dim : list[list[int]]    #starts from 0
     maxddset: list[list[int]]
-    in_dim : list[list[int]]
     
     def slice(self,stt:int,end:int):
-        return Target_Info(self.tar_f[stt:end],self.maxdelay[stt:end],self.degree[stt:end],self.maxddset,self.in_dim)
-#    def append():
+        return Target_Info(self.tar_f[stt:end],self.maxdelay[stt:end],self.degree[stt:end],self.in_dim[stt:end],self.maxddset)
     
+
+def cat_tar(tar1:Target_Info,tar2:Target_Info):
+        tar_ap = torch.cat((tar1.tar_f,tar2.tar_f))
+        
+        dl_ap = tar1.delay+tar2.delay
+        
+        dg_ap = tar1.degree+tar2.degree
+        id_ap = tar1.in_dim+tar2.in_dim     
+        dd_ap = tar1.maxddset+tar2.maxddset
+        return Target_Info(tar_ap,dl_ap,dg_ap,id_ap,dd_ap)
+
     
 @dataclass
 class IPC:
     val: torch.tensor
-    maxdelay: list[int]
+    delay: list[list[int]]
     degree: list[int]
+    in_dim : list[list[int]]    #starts from 0
     maxddset: list[list[int]]
-    in_dim : list[list[int]]
-    
+
+    def slice(self,stt:int,end:int):
+        return IPC(self.val[stt:end],self.maxdelay[stt:end],self.degree[stt:end],self.in_dim[stt:end],self.maxddset)      
+
     # Method to get values for a specific degree
     def get_val_by_degree(self, target_degree: int) -> torch.tensor:
         indices = [i for i, deg in enumerate(self.degree) if deg == target_degree]
         return self.val[indices]
     
     # Method to get total capacity for a specific degree
-    def get_val_by_degree(self, target_degree: int) -> torch.tensor:
+    def ipc_by_degree(self, target_degree: int) -> torch.tensor:
         return torch.sum(self.get_val_by_degree(self,target_degree))
+    
+    # Method to search ipc data by index
+    def get_by_ind(self, index: int):
+        return IPC(self.val[index],self.maxdelay[index],self.degree[index],self.in_dim[index],self.maxddset)      
 
+def IPC_w_targetinfo(capacities:torch.tensor ,target_info:Target_Info):
+    if capacities.shape[0]!=target_info.tar_f.shape[0]:
+        print(f"input length does not match: {capacities.shape[0]} ,{target_info.tar_f.shape[0]}",)
+    return IPC(capacities,target_info.delay,target_info.degree,target_info.in_dim,target_info.maxddset)
     
-    
+def cat_ipc(ipc1:IPC,ipc2:IPC):
+        tar_ap = torch.cat((ipc1.tar_f,ipc2.tar_f))
+        
+        dl_ap = ipc1.maxdelay+ipc2.maxdelay
+
+        dg_ap = ipc1.degree+ipc2.degree
+        id_ap = ipc1.in_dim+ipc2.in_dim
+        dd_ap = ipc1.maxddset+ipc2.maxddset
+        return IPC(tar_ap,dl_ap,dg_ap,id_ap,dd_ap)
+
+
+
 def MC_cSVD(u, Xwo, maxtau, sur_sets=20, ret_all=False):   
     try:
         dim = u.shape[0]
@@ -279,69 +311,87 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
     ##  [1,2,3] -> u(t-1)*u(t-2)*u(t-3)
         
     """init return values"""
-    targets = torch.tensor(())
+    targets = torch.zeros((1,T))
+
     dgrs = []
-    maxdelays = []
+#    maxdelays = []
     in_dim =[]
+    delay_s =[]
     setdegrees = maxddsets[:,0]
     setdelays = maxddsets[:,1]
-    dly_range = [max(setdelays[np.where(setdegrees>=dgr)[0][0]:]) for dgr in range(max(setdegrees))]
+    dly_range = [max(setdelays[np.where(setdegrees>=dgr)[0][0]:]) for dgr in np.arange(1,max(setdegrees)+1)]
     ## table of univariate bases, used as lookup table for fast computation of target functions
-    ## initialize table with raw values
-    """ need to implement mult input u[0->dim][Two+T-tau] """
+    ## shape: (maxdegree,dims,T+Two)
+    ## initialize table with raw values at basis_table[0]
     st=time.time()
-    basis_table=[torch.empty((dly_range[0],T))]
-    for t in np.arange(1,dly_range[0]+1):
-        basis_table[0][t]=u[0][Two-t:Two+T-t]
-    for dgr in np.arange(2,setdegrees[-1]+1):
-        basis_table.append(f_poly(basis_table[0][:dly_range[dgr-1]],dgr))
+    basis_table=u.unsqueeze(0)
+    for dgr in np.arange(2,max(setdegrees)+1):
+        basis_table= torch.cat((basis_table,f_poly(u,dgr).unsqueeze(0)),0)
     print(r"basis table creation:%.3f s"%(time.time()-st))    
+
     for i,maxdd in enumerate(maxddsets):
         ## dd =  [dgr,dly]
         maxdgr = maxdd[0]
         maxdly = maxdd[1]
-        if maxdd[0]==1:
-            for dim in dims:
-                tar = basis_table
-                tar = u[dim][Two - maxdly:Two + T - maxdly]
-                targets = torch.cat((targets,tar.unsqueeze(0)),0)
-        
-        dd_delays = list(C_rep(range(dims * (maxdly)),maxdgr))
+
+        if maxdgr==1:
+            for dim in range(dims):
+                for tau in np.arange(1,maxdly+1):
+                    targets = torch.cat((targets,u[dim][Two-tau:Two-tau+T].unsqueeze(0)),0)
+                delay_s+= [[n]for n in np.arange(1,maxdly+1)]
+                dgrs += ([1]*maxdly)
+                in_dim += ([dim]*maxdly)            
+            print(f"1 degree:{maxdly*dims} target functions")
+            continue
+        set_of_delays = list(C_rep(range(dims * (maxdly)),maxdgr))
         ## make targets
         ## targets : units * Ttrain
-        for unit,delays in enumerate(dd_delays) :
+        for delays in set_of_delays :
             tar = torch.ones(T)
             scanned=[]
             dim_in =[]
-            maxdelay=0
-            tau_ipc=0
+            delay_set =[]
+#            tau_ipc=0
             for i in range(maxdgr):
                 if delays[i] in scanned : continue
                 dgr = delays.count(delays[i])
                 scanned.append(delays[i])
+                dly = 1+ delays[i]%maxdly
+#                tau_ipc=max(tau_ipc,dly)
                 dim = int(delays[i]/maxdly)
-                dly = delays[i]%maxdly
-                tau_ipc=max(tau_ipc,dly)
-                tar *= basis_table[dgr-1][dly]
+
+                delay_set.append(dly)
+                tar *= basis_table[dgr-1][dim][Two-dly:Two-dly+T]
                 dim_in.append(dim)
-            maxdelays.append(tau_ipc)
+
+            delay_s.append(delay_set)
+#            maxdelays.append(tau_ipc)      
             targets = torch.cat((targets,tar.unsqueeze(0)),0)
             in_dim.append(dim_in)
-        print(f"{maxdgr} degree:{len(dd_delays)} target functions")
-        dgrs += ([maxdgr]*len(dd_delays)) 
-        
-    target_info = Target_Info(targets,maxdelays,dgrs,maxddsets,in_dim)
+        print(f"{maxdgr} degree:{len(set_of_delays)} target functions")
+        dgrs += ([maxdgr]*len(set_of_delays))
+    targets=targets[1:]
+    # old version
+    # target_info = Target_Info(targets,maxdelays,dgrs,maxddsets,in_dim)
+    target_info = Target_Info(targets,delay_s,dgrs,in_dim,maxddsets)
+    
     return target_info   
             
 
 
-def ipc_tau_old(ipcs,degrees,maxdelays,maxddsets,in_dims=None,mode="sum"):
+def ipc_tau_old(ipcs:IPC,degrees:list[list[int]],delays:list[list[int]],in_dims,maxddsets:list[list[int]],mode="sum"):
     ipc_tau=[]
     offset = maxddsets[0][0]
+    maxdelays = []
+    maxddsets = np.array(maxddsets)
+    for delay_set in delays:
+        maxdelays.append(max(delay_set))
     
-    maxdegree = len(maxddsets)
-    ipc_reshape = [None]*maxdegree
-    ipc_tau = [None]*maxdegree
+    num_degree = len(maxddsets)
+
+    ipc_reshape = [None]*num_degree
+    ipc_tau = [None]*num_degree
+
     for deg,delay in maxddsets:
         ipc_reshape[deg-offset] = [torch.tensor(())]*(delay)
         ipc_tau[deg-offset] = torch.empty(delay)
@@ -355,12 +405,43 @@ def ipc_tau_old(ipcs,degrees,maxdelays,maxddsets,in_dims=None,mode="sum"):
             elif mode=="mean":ipc_tau[deg-offset][delay] = torch.mean(ipc_reshape[deg-offset][delay])   
             else:print("available modes are: sum/mean")
     ## list of tensors
-    ## maxdelay length tensor IN maxdegree length list
+    ## maxdelay length tensor IN num_degree length list
     return ipc_tau
 
 def ipc_tau(ipc:IPC,mode="sum"):
-    return ipc_tau_old(ipc.val,ipc.degree,ipc.maxdelay,ipc.maxddset,mode=mode)
+    return ipc_tau_old(ipc.val,ipc.degree,ipc.delay,None,ipc.maxddset,mode=mode)
+
+def ipc_tau_spread(ipc:IPC,mode="sum"):
+    degrees=ipc.degree
+    delays=ipc.delay
+#    in_dims=ipc.in_dim
+    maxddsets=ipc.maxddset
+
+    ipc_tau=[]
+    offset = maxddsets[0][0]
+    num_degree = len(maxddsets)
+    ipc_reshape = [None]*num_degree
+    ipc_tau = [None]*num_degree
+    for deg,delay in maxddsets:
+        ipc_reshape[deg-offset] = [torch.tensor(())]*(delay)
+        ipc_tau[deg-offset] = torch.empty(delay)
     
+    for i,deg in enumerate(degrees):
+        # divide ipc by len(delays[i]) to spread the contribution
+        num_delays = len(delays[i])
+        for dly in delays[i]:
+            ipc_reshape[deg-offset][dly-1]=torch.cat((ipc_reshape[deg-offset][dly-1],(ipc.val[i]/num_delays).unsqueeze(0)),0) 
+        
+    for deg,maxdelay in maxddsets:
+        for delay in range(maxdelay):
+            if mode=="sum" :ipc_tau[deg-offset][delay] = torch.sum(ipc_reshape[deg-offset][delay])
+            elif mode=="mean":ipc_tau[deg-offset][delay] = torch.mean(ipc_reshape[deg-offset][delay])   
+            else:print("available modes are: sum/mean")
+    ## list of tensors
+    ## maxdelay length tensor IN num_degree length list
+    return ipc_tau
+
+
 """    
 def ipc_process(ipc; IPC):
     ipc_tau = ipc_tau(ipc.val,ipc.degree,ipc.maxdelay,ipc.maxddset)
@@ -378,6 +459,16 @@ def calc_ipc(target_info,Xwo,sur_sets):
     capacities = ESN.calc_capacity(Xwo,tar_ipc,forced_sur=sur)
     ipc = torch.cat((mfs,capacities))
     return ipc
+
+
+
+def plot_ipc_tau():
+
+
+
+def plot_forgetting_curve():
+
+
 
 
 
