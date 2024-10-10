@@ -372,7 +372,7 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
         dgrs += ([maxdgr]*len(set_of_delays))
     targets=targets[1:]
     # old version
-    # target_info = Target_Info(targets,maxdelays,dgrs,maxddsets,in_dim)
+    # target_info = Target_Info(targets,maxdelays,dgrs  ,maxddsets,in_dim)
     target_info = Target_Info(targets,delay_s,dgrs,in_dim,maxddsets)
     
     return target_info   
