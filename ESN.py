@@ -468,7 +468,7 @@ def plot_ipc_tau():
 
 def plot_forgetting_curve():
 
-
+def plot_by_degree(ipc:IPC, )
 
 
 
