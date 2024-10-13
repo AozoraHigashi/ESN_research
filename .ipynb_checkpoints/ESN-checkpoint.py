@@ -91,7 +91,7 @@ class IPC:
     
     # Method to get total capacity for a specific degree
     def ipc_by_degree(self, target_degree: int) -> torch.tensor:
-        return torch.sum(self.get_val_by_degree(self,target_degree))
+        return torch.sum(self.get_val_by_degree(target_degree))
     
     # Method to search ipc data by index
     def get_by_ind(self, index: int):
@@ -190,7 +190,7 @@ def MC_cSVD_theoretical(u, Xwo, maxtau, sur_sets=20, ret_all=False):
     sur_value = agg_sur/sur_sets
     
     mfs_rev = (raw_res - sur_value.unsqueeze(1))/(1-sur_value.unsqueeze(1))
-    mfs_theor = (raw_res - sur_value.unsqueeze(1)) / (1-(sur_value.unsqueeze(1)/(N-1)))
+    mfs_theo = (raw_res - sur_value.unsqueeze(1)) / (1-(sur_value.unsqueeze(1)/(N-1)))
 
     if ret_all: return raw_res, mfs_theor, mfs_rev, sur_value
     else : return mfs
@@ -399,8 +399,7 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
 
                 delay_set.append(dly)
                 tar *= basis_table[dgr-1][dim][Two-dly:Two-dly+T]
-                dim_in.append(dim)
-
+                if dim not in dim_in: dim_in.append(dim)
             delay_s.append(delay_set)
 #            maxdelays.append(tau_ipc)      
             targets = torch.cat((targets,tar.unsqueeze(0)),0)
