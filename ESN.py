@@ -231,6 +231,7 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
         agg_sur = agg_sur + sur
     sur_value = agg_sur/sur_sets
 
+
     mfs_rev = (raw_res - sur_value.unsqueeze(1))/(1-sur_value.unsqueeze(1))
     mfs_lin = mfs - (1-mfs)*sur_value.unsqueeze(1)
     if ret_all: return raw_res, mfs_lin, mfs_rev, sur_value
@@ -238,7 +239,7 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     
  
     
-def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
+def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,sur_thr=None):
     if Xwo.shape[0] == targets.shape[1]:
         T = Xwo.shape[0]
     N = Xwo.shape[1]
@@ -268,9 +269,21 @@ def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
     # apply surrogate
     c_rev = (raw_res - sur_value)/(1-sur_value)
     c_lin = raw_res - (1-raw_res)*sur_value
+    c_thr = raw_res*((raw_res - sur_value*sur_thr)>0)
     #mfs = mfs*(mfs>0)
     if ret_all: return raw_res, c_lin, c_rev, sur_value
     else : return c_rev
+
+def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
+    try : res = calc_capacity_module(Xwo,targets,sur_sets,ret_all,forced_sur)
+    except RuntimeError: 
+        tar1 = targets[:int(targets.shape(0)/2)]
+        tar2 = targets[int(targets.shape(0)/2):]
+        res1 = calc_capacity(Xwo,tar1,sur_sets,ret_all,forced_sur)
+        res2 = calc_capacity(Xwo,tar2,sur_sets,ret_all,forced_sur)
+        res = torch.cat((res1,res2))
+    return res
+
 
 
 
