@@ -40,7 +40,7 @@ class ESN_mult():
         if u.shape[0] != self.dim:
             print(f"Input dimension error: input must be shape ({self.dim}, T)")
         
-        T = u.shape[1]
+        T = u.shape[1]  
         X = torch.zeros((T, self.N))
         X[0] = X0
         for t in range(1, T):
@@ -48,7 +48,7 @@ class ESN_mult():
         
         Xwo = torch.hstack([X[Two:], torch.ones(T - Two, 1)])
         return Xwo
-
+    def get_W(self):return self.W
     
 @dataclass
 class Target_Info:
@@ -72,7 +72,7 @@ def cat_tar(tar1:Target_Info,tar2:Target_Info):
         dd_ap = tar1.maxddset+tar2.maxddset
         return Target_Info(tar_ap,dl_ap,dg_ap,id_ap,dd_ap)
 
-    
+
 @dataclass
 class IPC:
     val: torch.tensor
@@ -91,7 +91,7 @@ class IPC:
     
     # Method to get total capacity for a specific degree
     def ipc_by_degree(self, target_degree: int) -> torch.tensor:
-        return torch.sum(self.get_val_by_degree(self,target_degree))
+        return torch.sum(self.get_val_by_degree(target_degree))
     
     # Method to search ipc data by index
     def get_by_ind(self, index: int):
@@ -239,7 +239,7 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     
  
     
-def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,sur_thr=None):
+def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None):
     if Xwo.shape[0] == targets.shape[1]:
         T = Xwo.shape[0]
     N = Xwo.shape[1]
@@ -260,27 +260,35 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
     if forced_sur==None:
         ## calculate surrogate value
         agg_sur = torch.zeros(units)
+        max_sur=0
         for i in range(sur_sets):            
             shfld_tar = targets[:,torch.randperm(targets.shape[1])]
             sur = torch.sum(((shfld_tar / norms) @ P)**2,dim=1)
             agg_sur = agg_sur + sur
+            if i==0 : max_sur= max(sur)
         sur_value = agg_sur/sur_sets
-    else:sur_value = forced_sur
+    else:
+        sur_value = forced_sur
+        max_sur = forced_sur
     # apply surrogate
     c_rev = (raw_res - sur_value)/(1-sur_value)
     c_lin = raw_res - (1-raw_res)*sur_value
-    c_thr = raw_res*((raw_res - sur_value*sur_thr)>0)
+    if thr_scale == None : 
+        if ret_all:print("set threshold scale value: thr_scale=",thr_scale)
+        c_thr=None
+    else : c_thr = raw_res*((raw_res - max_sur*thr_scale)>0)
+
     #mfs = mfs*(mfs>0)
-    if ret_all: return raw_res, c_lin, c_rev, sur_value
+    if ret_all: return raw_res, c_lin, c_thr, c_rev, sur_value
     else : return c_rev
 
-def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
-    try : res = calc_capacity_module(Xwo,targets,sur_sets,ret_all,forced_sur)
+def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None):
+    try : res = calc_capacity_module(Xwo,targets,sur_sets,ret_all,forced_sur,thr_scale) 
     except RuntimeError: 
         tar1 = targets[:int(targets.shape(0)/2)]
         tar2 = targets[int(targets.shape(0)/2):]
-        res1 = calc_capacity(Xwo,tar1,sur_sets,ret_all,forced_sur)
-        res2 = calc_capacity(Xwo,tar2,sur_sets,ret_all,forced_sur)
+        res1 = calc_capacity(Xwo,tar1,sur_sets,ret_all,forced_sur,thr_scale)
+        res2 = calc_capacity(Xwo,tar2,sur_sets,ret_all,forced_sur,thr_scale)
         res = torch.cat((res1,res2))
     return res
 
@@ -321,6 +329,10 @@ def calc_capacity_asym(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
     #mfs = mfs*(mfs>0)
     if ret_all: return raw_res, c_lin, c_rev, sur_value
     else : return c_rev
+
+
+
+
 
 def polynomials(base):
     if base=="legendre":
@@ -417,7 +429,11 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
             delay_s.append(delay_set)
 #            maxdelays.append(tau_ipc)      
             targets = torch.cat((targets,tar.unsqueeze(0)),0)
+            """ use cpu 
+            targets = torch.cat((targets,tar.unsqueeze(0).cpu()),0)
+            """
             in_dim.append(dim_in)
+            
         print(f"{maxdgr} degree:{len(set_of_delays)} target functions")
         dgrs += ([maxdgr]*len(set_of_delays))
     targets=targets[1:]
