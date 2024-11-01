@@ -221,7 +221,6 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     # mfs : d * tau
     mfs = torch.sum((normal_y @ P)**2,dim=2) 
     raw_res = mfs
-    
     ## calculate surrogate value
     agg_sur = torch.zeros(dim)
     for i in range(sur_sets):            
@@ -239,7 +238,7 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     
  
     
-def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None):
+def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None,mean_normalization=False):
     if Xwo.shape[0] == targets.shape[1]:
         T = Xwo.shape[0]
     N = Xwo.shape[1]
@@ -250,11 +249,15 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
     P = U[:,:rank]
     # P: T * rank
     # targets : (number of bases) * Ttrain 
-    norms = torch.norm(targets, dim=1).unsqueeze(1)
-    means = torch.mean(targets, dim=1).unsqueeze(1)
     
+    ## implemented input mean normalzation
+    means = torch.mean(targets, dim=1).unsqueeze(1)
+    norms = torch.norm(targets-means, dim=1).unsqueeze(1)
+    if mean_normalization : target_hat = (targets-means)/norms
+    else: target_hat = targets/norms
     # capacities : number of bases
-    capacities = torch.sum(((targets / norms) @ P)**2,dim=1) 
+    #capacities = torch.sum(((targets / norms) @ P)**2,dim=1) 
+    capacities = torch.sum((target_hat @ P)**2,dim=1) 
     raw_res = capacities
     
     if forced_sur==None:
@@ -263,6 +266,8 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
         max_sur=0
         for i in range(sur_sets):            
             shfld_tar = targets[:,torch.randperm(targets.shape[1])]
+            shfld_tar = target_hat[:,torch.randperm(targets.shape[1])]
+
             sur = torch.sum(((shfld_tar / norms) @ P)**2,dim=1)
             agg_sur = agg_sur + sur
             if i==0 : max_sur= max(sur)
@@ -276,17 +281,21 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
     if thr_scale == None : 
         if ret_all:print("set threshold scale value: thr_scale=",thr_scale)
         c_thr=None
-    else : c_thr = raw_res*((raw_res - max_sur*thr_scale)>0)
+    else : # threshold and scaling combined
+        c_thr = (raw_res - sur_value)/(1-sur_value)*((raw_res - max_sur*thr_scale)>0)
 
     #mfs = mfs*(mfs>0)
     if ret_all: return raw_res, c_lin, c_thr, c_rev, sur_value
     else : return c_rev
 
-def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None):
-    try : res = calc_capacity_module(Xwo,targets,sur_sets,ret_all,forced_sur,thr_scale) 
+
+
+## avoid OOM error
+def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None,mean_normalization=False):
+    try : res = calc_capacity_module(Xwo,targets,sur_sets,ret_all,forced_sur,thr_scale,mean_normalization) 
     except RuntimeError: 
-        tar1 = targets[:int(targets.shape(0)/2)]
-        tar2 = targets[int(targets.shape(0)/2):]
+        tar1 = targets[:int(targets.shape[0]/2)]
+        tar2 = targets[int(targets.shape[0]/2):]
         res1 = calc_capacity(Xwo,tar1,sur_sets,ret_all,forced_sur,thr_scale)
         res2 = calc_capacity(Xwo,tar2,sur_sets,ret_all,forced_sur,thr_scale)
         res = torch.cat((res1,res2))
@@ -515,17 +524,13 @@ def ipc_process(ipc; IPC):
     return ipc_tau,
  
 
-def calc_ipc(target_info,Xwo,sur_sets):
+
+
+def calc_ipc(target_info,Xwo,sur_sets,ret_all=False):
 
     tar_func = target_info.tar_f
-    dgrs = torch.tensor(target_function.degree)
-    dlyed_u = tar_func[torch.argwhere(dgrs==1)]
-    -,-,mfs,sur = ESN.calc_capacity(Xwo,dlyed_u,sur_sets=sur_sets)
-    tar_ipc = tar_func[torch.argwhere(dgrs==1)]
-    capacities = ESN.calc_capacity(Xwo,tar_ipc,forced_sur=sur)
-    ipc = torch.cat((mfs,capacities))
-    return ipc
-
+    capacities = ESN.calc_capacity(Xwo,tar_func,forced_sur=None)
+    return 
 
 
 def plot_ipc_tau():
