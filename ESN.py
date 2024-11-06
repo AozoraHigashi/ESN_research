@@ -238,11 +238,14 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     
  
     
-def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None,mean_normalization=False):
+def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None,mean_normalization=True):
     if Xwo.shape[0] == targets.shape[1]:
         T = Xwo.shape[0]
     N = Xwo.shape[1]
     units = targets.shape[0]
+    if mean_normalization:
+        Xmean = torch.mean(Xwo,0)
+        Xwo = Xwo-Xmean
     U,sigma,_ = torch.linalg.svd(Xwo,full_matrices=False)
     if sigma[N-1] != 0: rank = N
     else : rank = torch.where(sigma==0)[0][0]
@@ -265,10 +268,8 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
         agg_sur = torch.zeros(units)
         max_sur=0
         for i in range(sur_sets):            
-            shfld_tar = targets[:,torch.randperm(targets.shape[1])]
             shfld_tar = target_hat[:,torch.randperm(targets.shape[1])]
-
-            sur = torch.sum(((shfld_tar / norms) @ P)**2,dim=1)
+            sur = torch.sum(((shfld_tar) @ P)**2,dim=1)
             agg_sur = agg_sur + sur
             if i==0 : max_sur= max(sur)
         sur_value = agg_sur/sur_sets
@@ -277,15 +278,17 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
         max_sur = forced_sur
     # apply surrogate
     c_rev = (raw_res - sur_value)/(1-sur_value)
-    c_lin = raw_res - (1-raw_res)*sur_value
+#    c_lin = raw_res - (1-raw_res)*sur_value
     if thr_scale == None : 
         if ret_all:print("set threshold scale value: thr_scale=",thr_scale)
         c_thr=None
-    else : # threshold and scaling combined
-        c_thr = (raw_res - sur_value)/(1-sur_value)*((raw_res - max_sur*thr_scale)>0)
+    else : 
+        c_thr=raw_res*((raw_res - max_sur*thr_scale)>0)
+        # threshold and scaling combined
+        c_thr_scale = (raw_res - sur_value)/(1-sur_value)*((raw_res - max_sur*thr_scale)>0)
 
     #mfs = mfs*(mfs>0)
-    if ret_all: return raw_res, c_lin, c_thr, c_rev, sur_value
+    if ret_all: return raw_res, c_thr, c_thr_scale, c_rev, sur_value
     else : return c_rev
 
 
