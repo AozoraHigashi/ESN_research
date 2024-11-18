@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from scipy.linalg import svd as svd
+from scipy.special import comb as comb
 from itertools import combinations_with_replacement as C_rep
 from dataclasses import dataclass, field
 import time
@@ -113,6 +114,16 @@ def cat_ipc(ipc1:IPC,ipc2:IPC):
         return IPC(tar_ap,dl_ap,dg_ap,id_ap,dd_ap)
 
 
+def base_num(maxddset,dim=1):
+    combs = []
+    for dgrdly in maxddset:
+        dgr=dgrdly[0]
+        dly=dgrdly[1]
+        n=dim*dly+dgr-1
+        r=dgr
+        res = comb(n,r)
+        combs.append(int(res))
+    return combs
 
 def MC_cSVD(u, Xwo, maxtau, sur_sets=20, ret_all=False):   
     try:
@@ -298,8 +309,11 @@ def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_sc
     try : res = calc_capacity_module(Xwo,targets,sur_sets,ret_all,forced_sur,thr_scale,mean_normalization) 
     except RuntimeError: 
         tar1 = targets[:int(targets.shape[0]/2)]
-        tar2 = targets[int(targets.shape[0]/2):]
+        tar2_temp = targets[int(targets.shape[0]/2):].cpu()
+        del targets
         res1 = calc_capacity(Xwo,tar1,sur_sets,ret_all,forced_sur,thr_scale)
+        del tar1
+        tar2 = tar2_temp.gpu()
         res2 = calc_capacity(Xwo,tar2,sur_sets,ret_all,forced_sur,thr_scale)
         res = torch.cat((res1,res2))
     return res
@@ -365,6 +379,9 @@ def legendre(u,degree):
 
     
 
+def make_targets(u,maxddset,Two,poly="legendre"):
+    return make_targets(u,maxddset,Two,poly=poly)
+
 def make_targets(u,maxddsets,Two,poly="legendre"):
     dims = u.shape[0]
     T = u.shape[1] - Two
@@ -402,12 +419,19 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
     for dgr in np.arange(2,max(setdegrees)+1):
         basis_table= torch.cat((basis_table,f_poly(u,dgr).unsqueeze(0)),0)
     print(r"basis table creation:%.3f s"%(time.time()-st))    
+    
+    combs = base_num(maxddsets,dim=dims)
+    for k in range(max(setdegrees)):
+        print(f"{k+1} degree:{combs[k]} target functions")
+    print(f"Total of {np.sum(combs)} bases")
 
     for i,maxdd in enumerate(maxddsets):
         ## dd =  [dgr,dly]
         maxdgr = maxdd[0]
         maxdly = maxdd[1]
 
+        print( f"\r {maxdd[0]}/{len(maxddsets)} degree bases now calculating ...",end = "")
+        
         if maxdgr==1:
             for dim in range(dims):
                 for tau in np.arange(1,maxdly+1):
@@ -415,7 +439,7 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
                 delay_s+= [[n]for n in np.arange(1,maxdly+1)]
                 dgrs += ([1]*maxdly)
                 in_dim += ([dim]*maxdly)            
-            print(f"1 degree:{maxdly*dims} target functions")
+            #print(f"1 degree:{maxdly*dims} target functions")
             continue
         set_of_delays = list(C_rep(range(dims * (maxdly)),maxdgr))
         ## make targets
@@ -445,10 +469,12 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
             targets = torch.cat((targets,tar.unsqueeze(0).cpu()),0)
             """
             in_dim.append(dim_in)
-            
-        print(f"{maxdgr} degree:{len(set_of_delays)} target functions")
+    
+        #print(f"{maxdgr} degree:{len(set_of_delays)} target functions")
         dgrs += ([maxdgr]*len(set_of_delays))
     targets=targets[1:]
+    print(f"target creation complete, total of {targets.shape[0]} bases")
+    
     # old version
     # target_info = Target_Info(targets,maxdelays,dgrs  ,maxddsets,in_dim)
     target_info = Target_Info(targets,delay_s,dgrs,in_dim,maxddsets)

@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from scipy.linalg import svd as svd
+from scipy.special import comb as comb
 from itertools import combinations_with_replacement as C_rep
 from dataclasses import dataclass, field
 import time
@@ -40,7 +41,7 @@ class ESN_mult():
         if u.shape[0] != self.dim:
             print(f"Input dimension error: input must be shape ({self.dim}, T)")
         
-        T = u.shape[1]
+        T = u.shape[1]  
         X = torch.zeros((T, self.N))
         X[0] = X0
         for t in range(1, T):
@@ -48,7 +49,7 @@ class ESN_mult():
         
         Xwo = torch.hstack([X[Two:], torch.ones(T - Two, 1)])
         return Xwo
-
+    def get_W(self):return self.W
     
 @dataclass
 class Target_Info:
@@ -72,7 +73,7 @@ def cat_tar(tar1:Target_Info,tar2:Target_Info):
         dd_ap = tar1.maxddset+tar2.maxddset
         return Target_Info(tar_ap,dl_ap,dg_ap,id_ap,dd_ap)
 
-    
+
 @dataclass
 class IPC:
     val: torch.tensor
@@ -113,6 +114,16 @@ def cat_ipc(ipc1:IPC,ipc2:IPC):
         return IPC(tar_ap,dl_ap,dg_ap,id_ap,dd_ap)
 
 
+def base_num(maxddset,dim=1):
+    combs = []
+    for dgrdly in maxddset:
+        dgr=dgrdly[0]
+        dly=dgrdly[1]
+        n=dim*dly+dgr-1
+        r=dgr
+        res = comb(n,r)
+        combs.append(int(res))
+    return combs
 
 def MC_cSVD(u, Xwo, maxtau, sur_sets=20, ret_all=False):   
     try:
@@ -190,7 +201,7 @@ def MC_cSVD_theoretical(u, Xwo, maxtau, sur_sets=20, ret_all=False):
     sur_value = agg_sur/sur_sets
     
     mfs_rev = (raw_res - sur_value.unsqueeze(1))/(1-sur_value.unsqueeze(1))
-    mfs_theo = (raw_res - sur_value.unsqueeze(1)) / (1-(sur_value.unsqueeze(1)/(N-1)))
+    mfs_theor = (raw_res - sur_value.unsqueeze(1)) / (1-(sur_value.unsqueeze(1)/(N-1)))
 
     if ret_all: return raw_res, mfs_theor, mfs_rev, sur_value
     else : return mfs
@@ -221,7 +232,6 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     # mfs : d * tau
     mfs = torch.sum((normal_y @ P)**2,dim=2) 
     raw_res = mfs
-    
     ## calculate surrogate value
     agg_sur = torch.zeros(dim)
     for i in range(sur_sets):            
@@ -231,6 +241,7 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
         agg_sur = agg_sur + sur
     sur_value = agg_sur/sur_sets
 
+
     mfs_rev = (raw_res - sur_value.unsqueeze(1))/(1-sur_value.unsqueeze(1))
     mfs_lin = mfs - (1-mfs)*sur_value.unsqueeze(1)
     if ret_all: return raw_res, mfs_lin, mfs_rev, sur_value
@@ -238,39 +249,72 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     
  
     
-def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
+def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None,mean_normalization=True):
     if Xwo.shape[0] == targets.shape[1]:
         T = Xwo.shape[0]
     N = Xwo.shape[1]
     units = targets.shape[0]
+    if mean_normalization:
+        Xmean = torch.mean(Xwo,0)
+        Xwo = Xwo-Xmean
     U,sigma,_ = torch.linalg.svd(Xwo,full_matrices=False)
     if sigma[N-1] != 0: rank = N
     else : rank = torch.where(sigma==0)[0][0]
     P = U[:,:rank]
     # P: T * rank
     # targets : (number of bases) * Ttrain 
-    norms = torch.norm(targets, dim=1).unsqueeze(1)
-    means = torch.mean(targets, dim=1).unsqueeze(1)
     
+    ## implemented input mean normalzation
+    means = torch.mean(targets, dim=1).unsqueeze(1)
+    norms = torch.norm(targets-means, dim=1).unsqueeze(1)
+    if mean_normalization : target_hat = (targets-means)/norms
+    else: target_hat = targets/norms
     # capacities : number of bases
-    capacities = torch.sum(((targets / norms) @ P)**2,dim=1) 
+    #capacities = torch.sum(((targets / norms) @ P)**2,dim=1) 
+    capacities = torch.sum((target_hat @ P)**2,dim=1) 
     raw_res = capacities
     
     if forced_sur==None:
         ## calculate surrogate value
         agg_sur = torch.zeros(units)
+        max_sur=0
         for i in range(sur_sets):            
-            shfld_tar = targets[:,torch.randperm(targets.shape[1])]
-            sur = torch.sum(((shfld_tar / norms) @ P)**2,dim=1)
+            shfld_tar = target_hat[:,torch.randperm(targets.shape[1])]
+            sur = torch.sum(((shfld_tar) @ P)**2,dim=1)
             agg_sur = agg_sur + sur
+            if i==0 : max_sur= max(sur)
         sur_value = agg_sur/sur_sets
-    else:sur_value = forced_sur
+    else:
+        sur_value = forced_sur
+        max_sur = forced_sur
     # apply surrogate
     c_rev = (raw_res - sur_value)/(1-sur_value)
-    c_lin = raw_res - (1-raw_res)*sur_value
+#    c_lin = raw_res - (1-raw_res)*sur_value
+    if thr_scale == None : 
+        if ret_all:print("set threshold scale value: thr_scale=",thr_scale)
+        c_thr=None
+    else : 
+        c_thr=raw_res*((raw_res - max_sur*thr_scale)>0)
+        # threshold and scaling combined
+        c_thr_scale = (raw_res - sur_value)/(1-sur_value)*((raw_res - max_sur*thr_scale)>0)
+
     #mfs = mfs*(mfs>0)
-    if ret_all: return raw_res, c_lin, c_rev, sur_value
+    if ret_all: return raw_res, c_thr, c_thr_scale, c_rev, sur_value
     else : return c_rev
+
+
+
+## avoid OOM error
+def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None,mean_normalization=False):
+    try : res = calc_capacity_module(Xwo,targets,sur_sets,ret_all,forced_sur,thr_scale,mean_normalization) 
+    except RuntimeError: 
+        tar1 = targets[:int(targets.shape[0]/2)]
+        tar2 = targets[int(targets.shape[0]/2):]
+        res1 = calc_capacity(Xwo,tar1,sur_sets,ret_all,forced_sur,thr_scale)
+        res2 = calc_capacity(Xwo,tar2,sur_sets,ret_all,forced_sur,thr_scale)
+        res = torch.cat((res1,res2))
+    return res
+
 
 
 
@@ -308,6 +352,10 @@ def calc_capacity_asym(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
     #mfs = mfs*(mfs>0)
     if ret_all: return raw_res, c_lin, c_rev, sur_value
     else : return c_rev
+
+
+
+
 
 def polynomials(base):
     if base=="legendre":
@@ -399,11 +447,16 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
 
                 delay_set.append(dly)
                 tar *= basis_table[dgr-1][dim][Two-dly:Two-dly+T]
-                if dim not in dim_in: dim_in.append(dim)
+                dim_in.append(dim)
+
             delay_s.append(delay_set)
 #            maxdelays.append(tau_ipc)      
             targets = torch.cat((targets,tar.unsqueeze(0)),0)
+            """ use cpu 
+            targets = torch.cat((targets,tar.unsqueeze(0).cpu()),0)
+            """
             in_dim.append(dim_in)
+            
         print(f"{maxdgr} degree:{len(set_of_delays)} target functions")
         dgrs += ([maxdgr]*len(set_of_delays))
     targets=targets[1:]
@@ -485,17 +538,13 @@ def ipc_process(ipc; IPC):
     return ipc_tau,
  
 
-def calc_ipc(target_info,Xwo,sur_sets):
+
+
+def calc_ipc(target_info,Xwo,sur_sets,ret_all=False):
 
     tar_func = target_info.tar_f
-    dgrs = torch.tensor(target_function.degree)
-    dlyed_u = tar_func[torch.argwhere(dgrs==1)]
-    -,-,mfs,sur = ESN.calc_capacity(Xwo,dlyed_u,sur_sets=sur_sets)
-    tar_ipc = tar_func[torch.argwhere(dgrs==1)]
-    capacities = ESN.calc_capacity(Xwo,tar_ipc,forced_sur=sur)
-    ipc = torch.cat((mfs,capacities))
-    return ipc
-
+    capacities = ESN.calc_capacity(Xwo,tar_func,forced_sur=None)
+    return 
 
 
 def plot_ipc_tau():
