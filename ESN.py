@@ -32,7 +32,7 @@ class ESN_mult():
             self.Win = (torch.rand(N, dim) * 2 - 1) * sigma
             self.Win = self.Win * (torch.rand(N, dim) < pin).float()
 
-    def run_washout(self, u, Two, actf=None, f=torch.tanh, X0=None): 
+    def run_washout(self, u, Two, actf=None, f=torch.tanh, X0=None,bias = False): 
         if actf is not None:
             f = FUNCTIONS[actf]
         if X0 is None:
@@ -44,11 +44,15 @@ class ESN_mult():
         T = u.shape[1]  
         X = torch.zeros((T, self.N))
         X[0] = X0
-        for t in range(1, T):
-            X[t] = f(self.W @ X[t - 1] + self.Win @ u[:, t - 1])
         
+        for t in range(1, T):
+            if bias : 
+                b = torch.rand(self.N)*0.5
+                X[t] = f(self.W @ X[t - 1] + self.Win @ u[:, t - 1] + b)
+            else : X[t] = f(self.W @ X[t - 1] + self.Win @ u[:, t - 1])
         Xwo = torch.hstack([X[Two:], torch.ones(T - Two, 1)])
         return Xwo
+
     def get_W(self):return self.W
     
 @dataclass
@@ -90,6 +94,14 @@ class IPC:
         indices = [i for i, deg in enumerate(self.degree) if deg == target_degree]
         return self.val[indices]
     
+    def ipc_list_by_degree(self) -> torch.tensor:
+        maxdegree = len(self.maxddset)
+        ipc_by_deg=[]
+        for i in range(1,maxdegree+1):
+            ipc_by_deg.append(IPC.ipc_by_degree(i))
+        ipc_by_deg = torch.tensor(ipc_by_deg)
+        return ipc_by_deg
+
     # Method to get total capacity for a specific degree
     def ipc_by_degree(self, target_degree: int) -> torch.tensor:
         return torch.sum(self.get_val_by_degree(target_degree))
@@ -97,7 +109,9 @@ class IPC:
     # Method to search ipc data by index
     def get_by_ind(self, index: int):
         return IPC(self.val[index],self.maxdelay[index],self.degree[index],self.in_dim[index],self.maxddset)      
-
+    
+    
+    
 def IPC_w_targetinfo(capacities:torch.tensor ,target_info:Target_Info):
     if capacities.shape[0]!=target_info.tar_f.shape[0]:
         print(f"input length does not match: {capacities.shape[0]} ,{target_info.tar_f.shape[0]}",)
@@ -215,6 +229,10 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     N = Xwo.shape[1]
     T = Xwo.shape[0]
     Two = u.shape[1] - T
+    
+    Xmean = torch.mean(Xwo,0)
+    Xwo = Xwo-Xmean
+    
     U,sigma,_ = torch.linalg.svd(Xwo,full_matrices=False)
     if sigma[N-1] != 0: rank = N
     else : rank = torch.where(sigma==0)[0][0]
@@ -228,7 +246,7 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     means = torch.mean(y_matrix, dim=2).unsqueeze(2)
     norms = torch.norm(y_matrix-means, dim=2).unsqueeze(2)
     normal_y = ((y_matrix-means) / norms)
-    print(torch.norm(normal_y,2))
+    #print(torch.norm(normal_y,2))
     # mfs : d * tau
     mfs = torch.sum((normal_y @ P)**2,dim=2) 
     raw_res = mfs
@@ -278,12 +296,16 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
         ## calculate surrogate value
         agg_sur = torch.zeros(units)
         max_sur=0
+
+#  number of surrogate samples = number of targets * sur_sets 
         for i in range(sur_sets):            
             shfld_tar = target_hat[:,torch.randperm(targets.shape[1])]
             sur = torch.sum(((shfld_tar) @ P)**2,dim=1)
             agg_sur = agg_sur + sur
             if i==0 : max_sur= max(sur)
-        sur_value = agg_sur/sur_sets
+        """ use single sur value independent of target """
+        sur_value = torch.mean(agg_sur)/sur_sets
+        
     else:
         sur_value = forced_sur
         max_sur = forced_sur
@@ -293,6 +315,7 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
     if thr_scale == None : 
         if ret_all:print("set threshold scale value: thr_scale=",thr_scale)
         c_thr=None
+        c_thr_scale=None
     else : 
         c_thr=raw_res*((raw_res - max_sur*thr_scale)>0)
         # threshold and scaling combined
@@ -311,10 +334,10 @@ def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_sc
         tar1 = targets[:int(targets.shape[0]/2)]
         tar2_temp = targets[int(targets.shape[0]/2):].cpu()
         del targets
-        res1 = calc_capacity(Xwo,tar1,sur_sets,ret_all,forced_sur,thr_scale)
+        res1 = calc_capacity(Xwo,tar1,sur_sets,ret_all,forced_sur,thr_scale,mean_normalization)
         del tar1
         tar2 = tar2_temp.gpu()
-        res2 = calc_capacity(Xwo,tar2,sur_sets,ret_all,forced_sur,thr_scale)
+        res2 = calc_capacity(Xwo,tar2,sur_sets,ret_all,forced_sur,thr_scale,mean_normalization)
         res = torch.cat((res1,res2))
     return res
 
@@ -473,7 +496,7 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
         #print(f"{maxdgr} degree:{len(set_of_delays)} target functions")
         dgrs += ([maxdgr]*len(set_of_delays))
     targets=targets[1:]
-    print(f"target creation complete, total of {targets.shape[0]} bases")
+    print(f"\ntarget creation complete, total of {targets.shape[0]} bases")
     
     # old version
     # target_info = Target_Info(targets,maxdelays,dgrs  ,maxddsets,in_dim)
