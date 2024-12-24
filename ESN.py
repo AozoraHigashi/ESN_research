@@ -328,7 +328,7 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
 
 
 ## avoid OOM error
-def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None,mean_normalization=False):
+def calc_capacity(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None,thr_scale=None,mean_normalization=True):
     try : res = calc_capacity_module(Xwo,targets,sur_sets,ret_all,forced_sur,thr_scale,mean_normalization) 
     except RuntimeError: 
         tar1 = targets[:int(targets.shape[0]/2)]
@@ -385,8 +385,10 @@ def calc_capacity_asym(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
 
 def polynomials(base):
     if base=="legendre":
-        return torch._C._special.special_legendre_polynomial_p
-
+        return torch.special.legendre_polynomial_p
+    if base=="hermite":
+# not torch.special.hermite_polynomial_h    
+        return torch.special.hermite_polynomial_he
     
 """ 
 # naive implmentation
