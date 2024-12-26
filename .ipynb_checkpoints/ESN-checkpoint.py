@@ -110,7 +110,15 @@ class IPC:
     def get_by_ind(self, index: int):
         return IPC(self.val[index],self.maxdelay[index],self.degree[index],self.in_dim[index],self.maxddset)      
     
-    
+    def get_by_indim(self,dim:list[int]):
+        inds=[]
+        for i,idim in enumerate(self.in_dim):
+            if idim==dim:inds.append(i)
+        return self.val[inds]
+        
+    def ipc_by_indim(self,dim:list[int]):
+        return torch.sum(self.get_by_indim(dim))
+        
     
 def IPC_w_targetinfo(capacities:torch.tensor ,target_info:Target_Info):
     if capacities.shape[0]!=target_info.tar_f.shape[0]:
@@ -387,9 +395,8 @@ def polynomials(base):
     if base=="legendre":
         return torch.special.legendre_polynomial_p
     if base=="hermite":
-#  which one is suitable?
-#        return torch.special.hermite_polynomial_he
-        return torch.special.hermite_polynomial_h
+# not torch.special.hermite_polynomial_h    
+        return torch.special.hermite_polynomial_he
     
 """ 
 # naive implmentation
@@ -464,7 +471,7 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
                     targets = torch.cat((targets,u[dim][Two-tau:Two-tau+T].unsqueeze(0)),0)
                 delay_s+= [[n]for n in np.arange(1,maxdly+1)]
                 dgrs += ([1]*maxdly)
-                in_dim += ([dim]*maxdly)            
+                in_dim += ([[dim]]*maxdly)            
             #print(f"1 degree:{maxdly*dims} target functions")
             continue
         set_of_delays = list(C_rep(range(dims * (maxdly)),maxdgr))
