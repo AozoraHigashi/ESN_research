@@ -5,6 +5,49 @@ import time
 import numpy as np
 
 
+
+def gram_schmidt(vectors):
+    """
+    Apply Gram-Schmidt orthogonalization to a set of vectors.
+
+    Args:
+        vectors (torch.Tensor): A tensor of shape (num_vectors, vector_dim).
+
+    Returns:
+        torch.Tensor: Orthogonalized vectors of shape (num_vectors, vector_dim).
+    """
+    orthogonal_vectors = []
+    for i in range(vectors.size(0)):
+        v = vectors[i]
+        for u in orthogonal_vectors:
+            v = v - torch.dot(v, u) / torch.dot(u, u) * u
+        orthogonal_vectors.append(v)
+    return torch.stack(orthogonal_vectors)
+
+def process_tensor(input_tensor, tau, T):
+    """
+    Process the input tensor to generate orthogonalized delay vectors.
+
+    Args:
+        input_tensor (torch.Tensor): Input tensor of shape (t + T_tr).
+        tau (int): Maximum delay.
+        T (int): Length of delay tensor.
+
+    Returns:
+        torch.Tensor: Orthogonalized vectors of shape (tau + 1, T).
+    """
+    # Validate input
+    assert input_tensor.dim() == 1, "Input tensor must be 1-dimensional"
+    t_Ttr = input_tensor.size(0)
+    assert t_Ttr > T, "Input tensor length must be greater than T"
+    # Extract tau + 1 vectors from the input tensor
+    tau_vectors = torch.stack([input_tensor[i:i + T] for i in range(tau + 1)])
+    # Apply Gram-Schmidt orthogonalization
+    orthogonal_vectors = gram_schmidt(tau_vectors)
+
+    return orthogonal_vectors
+
+
 def ipc_tau_plot(ipc:ESN.IPC,degrees=None,xmax=None):
     ipc_tau_sp_sum = ESN.ipc_tau_spread(ipc=ipc,mode="sum")
     ipc_tau_sp_mean = ESN.ipc_tau_spread(ipc=ipc,mode="mean")
@@ -111,3 +154,4 @@ def Ornstein_Uhlenbeck(noise:torch.tensor,theta=1,mu=0,sigma=0.5,disc_step=1000,
     return TS[1:], ys[1:], delta_y[1:]
     
 #def narma_N()
+

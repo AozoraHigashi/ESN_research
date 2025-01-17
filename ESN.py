@@ -493,7 +493,7 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
 
                 delay_set.append(dly)
                 tar *= basis_table[dgr-1][dim][Two-dly:Two-dly+T]
-                dim_in.append(dim)
+                if dim not in dim_in: dim_in.append(dim)
 
             delay_s.append(delay_set)
 #            maxdelays.append(tau_ipc)      
@@ -501,7 +501,7 @@ def make_targets(u,maxddsets,Two,poly="legendre"):
             """ use cpu 
             targets = torch.cat((targets,tar.unsqueeze(0).cpu()),0)
             """
-            in_dim.append(dim_in)
+            in_dim.append(dim_in.sort())
     
         #print(f"{maxdgr} degree:{len(set_of_delays)} target functions")
         dgrs += ([maxdgr]*len(set_of_delays))
