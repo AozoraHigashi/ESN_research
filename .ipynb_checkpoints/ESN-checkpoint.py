@@ -7,7 +7,7 @@ from itertools import combinations_with_replacement as C_rep
 from dataclasses import dataclass, field
 import time
 
-FUNCTIONS = {"identity":(lambda x : x), "tanh":torch.nn.Tanh()}
+FUNCTIONS = {"identity":(lambda x : x), "tanh":torch.nn.Tanh(), "leakyReLU":torch.nn.LeakyReLU()}
 
 class ESN_mult():
     def __init__(self, N, sigma=0.1, p=1, pin=1, rho=0.9, rseed=0, uC=0, dim=1, idWin=False):
@@ -157,6 +157,7 @@ def MC_cSVD(u, Xwo, maxtau, sur_sets=20, ret_all=False):
     T = Xwo.shape[0]
     Two = u.shape[1] - T
     U,sigma,_ = torch.linalg.svd(Xwo,full_matrices=False)
+    del Xwo
     if sigma[N-1] != 0: rank = N
     else : rank = torch.where(sigma==0)[0][0]
     P = U[:,:rank]
@@ -199,6 +200,7 @@ def MC_cSVD_theoretical(u, Xwo, maxtau, sur_sets=20, ret_all=False):
     T = Xwo.shape[0]
     Two = u.shape[1] - T
     U,sigma,_ = torch.linalg.svd(Xwo,full_matrices=False)
+    del Xwo
     if sigma[N-1] != 0: rank = N
     else : rank = torch.where(sigma==0)[0][0]
     P = U[:,:rank]
@@ -208,7 +210,8 @@ def MC_cSVD_theoretical(u, Xwo, maxtau, sur_sets=20, ret_all=False):
     y_matrix = torch.tensor(())
     for d in range(dim):
         y_matrix = torch.cat((y_matrix,torch.stack([u[d][Two - tau:Two + T - tau] for tau in taus]).unsqueeze(0)),0)
-    norms = torch.norm(y_matrix, dim=2).unsqueeze(2)
+    means = torch.mean(y_matrix, dim=2).unsqueeze(2)
+    norms = torch.norm(y_matrix-means, dim=2).unsqueeze(2)    
     
     # mfs : d * tau
     mfs = torch.sum(((y_matrix / norms) @ P)**2,dim=2) 
@@ -242,6 +245,10 @@ def MC_cSVD_asym(u, Xwo, maxtau, sur_sets=1, ret_all=False):
     Xwo = Xwo-Xmean
     
     U,sigma,_ = torch.linalg.svd(Xwo,full_matrices=False)
+    # clear Xwo from GPU for memory space
+    del Xwo
+#    Xwo.to(torch.device("cpu"))
+    
     if sigma[N-1] != 0: rank = N
     else : rank = torch.where(sigma==0)[0][0]
     P = U[:,:rank]
@@ -284,6 +291,7 @@ def calc_capacity_module(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None
         Xmean = torch.mean(Xwo,0)
         Xwo = Xwo-Xmean
     U,sigma,_ = torch.linalg.svd(Xwo,full_matrices=False)
+    del Xwo
     if sigma[N-1] != 0: rank = N
     else : rank = torch.where(sigma==0)[0][0]
     P = U[:,:rank]
@@ -358,6 +366,7 @@ def calc_capacity_asym(Xwo,targets,sur_sets=10,ret_all = False,forced_sur=None):
     N = Xwo.shape[1]
     units = targets.shape[0]
     U,sigma,_ = torch.linalg.svd(Xwo,full_matrices=False)
+    del Xwo
     if sigma[N-1] != 0: rank = N
     else : rank = torch.where(sigma==0)[0][0]
     P = U[:,:rank]

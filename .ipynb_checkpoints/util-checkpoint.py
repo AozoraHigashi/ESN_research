@@ -4,9 +4,11 @@ import ESN
 import time
 import numpy as np
 
+torch.set_default_device("cuda:0")
+torch.set_default_dtype(torch.double)
 
 
-def gram_schmidt(vectors):
+def gram_schmidt(vectors,normalize = False):
     """
     Apply Gram-Schmidt orthogonalization to a set of vectors.
 
@@ -17,10 +19,13 @@ def gram_schmidt(vectors):
         torch.Tensor: Orthogonalized vectors of shape (num_vectors, vector_dim).
     """
     orthogonal_vectors = []
+#    orthogonal_vectors = [torch.ones(vectors.size(1))]
     for i in range(vectors.size(0)):
         v = vectors[i]
         for u in orthogonal_vectors:
             v = v - torch.dot(v, u) / torch.dot(u, u) * u
+        if normalize:
+            v = v/torch.norm(v)
         orthogonal_vectors.append(v)
     return torch.stack(orthogonal_vectors)
 
@@ -41,7 +46,9 @@ def process_tensor(input_tensor, tau, T):
     t_Ttr = input_tensor.size(0)
     assert t_Ttr > T, "Input tensor length must be greater than T"
     # Extract tau + 1 vectors from the input tensor
-    tau_vectors = torch.stack([input_tensor[i:i + T] for i in range(tau + 1)])
+    
+    tau_vectors = torch.stack([input_tensor[-T-i:-i] for i in torch.arange(1,tau)])
+    tau_vectors = torch.vstack((input_tensor[-T:],tau_vectors))
     # Apply Gram-Schmidt orthogonalization
     orthogonal_vectors = gram_schmidt(tau_vectors)
 
@@ -114,14 +121,18 @@ def OU_random_sampling(rseed,theta=1, mu=0, sigma=0.5, T=100000, disc_step=1000,
     delta_y = torch.zeros(TS.size(0))
     ys[0] = Y_INIT
 
-    
     torch.manual_seed(rseed)
-    noise = torch.normal(0,1,(T,))
+    noise = torch.normal(0,1,(T,),device="cuda:0")
     eta = noise * torch.sqrt(torch.tensor(DT))  
     
+    for i in range(TS.size(0)):
+        delta_y[i] = -theta * (ys[i - 1] - mu) * DT + sigma * eta[i-1]
+        ys[i] = ys[i - 1] + delta_y[i-1]
+
+    """     bugged version ?   
     delta_y = torch.tensor([-theta * (ys[i - 1] - mu) * DT + sigma * eta[i-1] for i in range(1, TS.size(0))])
     ys = torch.tensor([ys[i - 1] + delta_y[i-1] for i in range(1, TS.size(0))])
-    
+    """   
     return TS[1:], ys[1:], delta_y[1:]
     
 
@@ -148,9 +159,14 @@ def Ornstein_Uhlenbeck(noise:torch.tensor,theta=1,mu=0,sigma=0.5,disc_step=1000,
     ys[0] = Y_INIT
     
     eta = noise * torch.sqrt(torch.tensor(DT))  
+    for i in range(TS.size(0)):
+        delta_y[i] = -theta * (ys[i - 1] - mu) * DT + sigma * eta[i-1]
+        ys[i] = ys[i - 1] + delta_y[i-1]
+
+    """     bugged version ?   
     delta_y = torch.tensor([-theta * (ys[i - 1] - mu) * DT + sigma * eta[i-1] for i in range(1, TS.size(0))])
     ys = torch.tensor([ys[i - 1] + delta_y[i-1] for i in range(1, TS.size(0))])
-    
+    """
     return TS[1:], ys[1:], delta_y[1:]
     
 #def narma_N()
